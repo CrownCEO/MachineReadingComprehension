@@ -1,5 +1,5 @@
 import tensorflow as tf
-
+from .layers import conv, highway
 
 class Model(object):
 
@@ -67,10 +67,16 @@ class Model(object):
 
     def forward(self):
         config = self.config
+        # 代码是不是有问题 c_maxlen 应该是对应CL吧
         N, PL, QL, CL, d, dc, nh = config.batch_size if not self.demo else 1, self.c_maxlen, self.q_maxlen, config.char_limit, config.hidden, config.char_dim, config.num_heads
 
-        # variable_scop/name_scope简介这种scope最直接的影响是: 所有在scope下面创建的variable都会把这个scope的名字作为前缀
+        # variable_scope/name_scope简介这种scope最直接的影响是: 所有在scope下面创建的variable都会把这个scope的名字作为前缀
         # name_scope给operation分类。同时使用variable_scope来区分variable.
+
+        # word embedding + character embedding，word embedding从预先训练好的词向量中读取，每个词向量维度为p1，假设词w对应词向量为xw；
+        # character embedding随机初始化，维度为p2，在此基础上将每个词维度padding or truncating为k，则每个词可以表示成一个p2∗k的矩阵，
+        # 经过卷积和max - pooling后得到一个p2维的character - level的词向量，记为xc。
+        # 将xw​和xc​拼接，得到w对应词向量[xw;xc]∈R(p1 + p2)​，最后将拼接的词向量通过一个两层的highway network，其输出即为embedding层的输出。
         with tf.variable_scope("Input_Embedding_layer"):
             ch_emb = tf.reshape(tf.nn.embedding_lookup(self.char_mat, self.ch), [N * PL, CL, dc])
             qh_emb = tf.reshape(tf.nn.embedding_lookup(self.char_mat, self.qh), [N * QL, CL, dc])
@@ -79,6 +85,29 @@ class Model(object):
 
             # Bidaf style conv-highway encoder
             ch_emb = conv(ch_emb, d, bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=None)
+            qh_emb = conv(qh_emb, d, bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=True)
+
+            ch_emb = tf.reduce_max(ch_emb, axis=1)
+            qh_emb = tf.reduce_max(qh_emb, axis=1)
+
+            ch_emb = tf.reshape(ch_emb, [N, PL, ch_emb.shape[-1]])
+            qh_emb = tf.reshape(qh_emb, [N, QL, ch_emb.shape[-1]])
+
+            c_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.c), 1.0 - self.dropout)
+            q_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.q), 1.0 - self.dropout)
+
+            c_emb = tf.concat([c_emb, ch_emb], axis=2)
+            q_emb = tf.concat([q_emb, qh_emb], axis=2)
+
+            c_emb = highway(c_emb, size=d, scope="highway", dropout=self.dropout, reuse=None)
+            q_emb = highway(q_emb, size=d, scope="highway", dropout=self.dropout, reuse=True)
+
+        with tf.variable_scope("Embedding_Encoder_Layer"):
+            c = residual_block(c_emb, num_blocks=1, num_conv_layers=4, kernel_size=7, mask=self.c_mask, num_filters=d, num_heads=nh,
+                               seq_len=self.c_len, scope="Encoder_Residual_Block")
+            q = residual_block(q_emb, num_blocks=1, num_conv_layers=4, kernel_size=7, mask=self.q_mask, num_filters=d, num_heads=nh,
+                               seq_len=self.q_len, scope="Encoder_Residual_Block", reuse=True,# Share the weights between passage and question
+                               bias=False, dropout=self.dropout)
 
 
 
