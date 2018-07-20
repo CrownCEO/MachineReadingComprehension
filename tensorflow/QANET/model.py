@@ -1,5 +1,6 @@
 import tensorflow as tf
-from .layers import conv, highway
+from .layers import conv, highway, residual_block
+
 
 class Model(object):
 
