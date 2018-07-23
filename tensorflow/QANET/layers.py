@@ -10,7 +10,6 @@ https://github.com/allenai/bi-att-flow
 # https://www.cnblogs.com/hans209/p/7103168.html 看完后知道可tensorflow 中提供的三种基本卷积
 
 
-
 # 三种权重的初始化方法 Gaussian Xavier MSRA https://blog.csdn.net/qq_26898461/article/details/50996507
 # 通过使用Xavier这种初始化方法，我们能够保证输入变量的变化尺度不变，从而避免变化尺度在最后一层网络中爆炸或者弥散
 initializer = lambda: tf.contrib.layers.variance_scaling_initializer(factor=1.0, mode='FAN_AVG', uniform=True,
@@ -150,6 +149,9 @@ def conv_block(inputs, num_conv_layers, kernel_size, num_filters,
         return tf.squeeze(outputs, 2), l
 
 
+# http://arxiv.org/ abs/1611.01603.（我最开始以为是这个，后来发现不是，但是这篇文章也有很大的参考价值）
+# https://arxiv.org/abs/1706.03762 （这个是下面函数的具体讲解）
+# 自注意力机制
 def self_attention_block(inputs, num_filters, seq_len, mask=None, num_heads=8,
                          scope="self_attention_ffn", reuse=None, is_training=True,
                          bias=True, dropout=0.0, sublayers=(1, 1)):
@@ -273,3 +275,229 @@ def depthwise_separable_convolution(inputs, kernel_size, num_filters,
             outputs += b
         outputs = tf.nn.relu(outputs)
         return outputs
+
+
+# 这个是Google提出的新概念,是Attention机制的完善
+# 就是多做几次同样的事情，（参数不共享），然后把结果拼接起来
+# 做阅读理解的话，Q 可以是篇章的词向量序列，取 K=V 为问题的词向量序列，那么输出就是所谓的 Aligned Question Embedding。
+def multihead_attention(queries, units, num_heads,
+                        memory=None,
+                        seq_len=None,
+                        scope="Multi_Head_Attention",
+                        reuse=None,
+                        mask=None,
+                        is_training=True,
+                        bias=True,
+                        dropout=0.0):
+    with tf.variable_scope(scope, reuse=reuse):
+        # Self attention
+        if memory is None:
+            memory = queries
+
+        memory = conv(memory, 2 * units, name="memory_projection", reuse=reuse)
+        query = conv(queries, units, name="query_projection", reuse=reuse)
+        Q = split_last_dimension(query, num_heads)
+        K, V = [split_last_dimension(tensor, num_heads) for tensor in tf.split(memory, 2, axis=2)]
+
+        key_depth_per_head = units // num_heads
+        Q *= key_depth_per_head ** -0.5
+        x = dot_product_attention(Q, K, V,
+                                  bias=bias,
+                                  seq_len=seq_len,
+                                  mask=mask,
+                                  is_training=is_training,
+                                  scope="dot_product_attention",
+                                  reuse=reuse, dropout=dropout)
+        return combine_last_two_dimensions(tf.transpose(x, [0, 2, 1, 3]))
+
+
+def split_last_dimension(x, n):
+    """Reshape x so that the last dimension becomes two dimensions.
+    The first of these two dimensions is n.
+    Args:
+    x: a Tensor with shape [..., m]
+    n: an integer.
+    Returns:
+    a Tensor with shape [..., n, m/n]
+    """
+    old_shape = x.get_shape().dims
+    last = old_shape[-1]
+    new_shape = old_shape[:-1] + [n] + [last // n if last else None]
+    ret = tf.reshape(x, tf.concat([tf.shape(x)[:-1], [n, -1]], 0))
+    ret.set_shape(new_shape)
+    return tf.transpose(ret, [0, 2, 1, 3])
+
+
+# scaled Dot Product Attention 这个是Google提出来的一个具体的Attention操作
+# 如果忽略softmax的话，事实上它就是一个 NxDk ,DkxM, MxDv 的矩阵相乘，最后的结果就是一个NxDv的矩阵
+# 于是我们可以认为 Attention层将 NxDk的序列Q 编码成一个新的 NxDv的序列
+# 其中 q,k,v分别是query,key,value的关系，那么函数的意义就是通过q 这个query,通过与各个ks内积的并softmax的方式，
+# 来得到q 与 各个v的相似度，然后加权求和，得到一个Dv的向量，其中bias起到调节作用，使得内积不至于太大
+# 太大的话，softmax 后非0即1,不够 "soft" 了 （这只是定义Attention的一种形式，query和key的运算方式不一定是点乘）
+def dot_product_attention(q, k, v, bias, seq_len=None, mask=None, is_training=True, scope=None, reuse=None,
+                          dropout=0.0):
+    """dot-product attention.
+      Args:
+      q: a Tensor with shape [batch, heads, length_q, depth_k]
+      k: a Tensor with shape [batch, heads, length_kv, depth_k]
+      v: a Tensor with shape [batch, heads, length_kv, depth_v]
+      bias: bias Tensor (see attention_bias())
+      is_training: a bool of training
+      scope: an optional string
+      Returns:
+      A Tensor.
+      """
+    with tf.variable_scope(scope, default_name="dot_product_attention", reuse=reuse):
+        # [batch, num_heads, query_length, memory_length]
+        logits = tf.matmul(q, k, transpose_b=True)
+        if bias:
+            b = tf.get_variable("bias",
+                                logits.shape[-1],
+                                regularizer=regularizer,
+                                initializer=tf.zeros_initializer())
+            logits += b
+        if mask is not None:
+            shapes = [x if x is not None else -1 for x in logits.shape.as_list()]
+            mask = tf.reshape(mask, [shapes[0], 1, 1, shapes[-1]])
+            logits = mask_logits(logits, mask)
+        weights = tf.nn.softmax(logits, name="attention_weights")
+        # dropping out the attention links for each of the heads
+        weights = tf.nn.dropout(weights, 1.0 - dropout)
+        return tf.matmul(weights, v)
+
+
+# 我们要对序列做 Mask 以忽略填充部分的影响。一般的 Mask 是将填充部分置零，但 Attention 中的 Mask 是要在 softmax 之前，
+# 把填充部分减去一个大整数（这样 softmax 之后就非常接近 0 了）
+def mask_logits(inputs, mask, mask_value=-1e30):
+    shapes = inputs.shape.as_list()
+    mask = tf.cast(mask, tf.float32)
+    return inputs + mask_value * (1 - mask)
+
+
+def combine_last_two_dimensions(x):
+    """Reshape x so that the last two dimension become one.
+    Args:
+    x: a Tensor with shape [..., a, b]
+    Returns:
+    a Tensor with shape [..., ab]
+    """
+    old_shape = x.get_shape().dims
+    a, b = old_shape[-2:]
+    new_shape = old_shape[:-2] + [a * b if a and b else None]
+    ret = tf.reshape(x, tf.concat([tf.shape(x)[:-2], [-1]], 0))
+    ret.set_shape(new_shape)
+    return ret
+
+
+# 具体参看论文 https://arxiv.org/abs/1611.01603 中的Attention FLow layer
+# tf.tile()这个操作会把输入的tensor 的指定维度 扩张复制
+# 计算相似性矩阵 传递过来的args 中 包括 c, q,
+def optimized_trilinear_for_attention(args, c_maxlen, q_maxlen, input_keep_prob=1.0,
+                                      scope='efficient_trilinear',
+                                      bias_initializer=tf.zeros_initializer(),
+                                      kernel_initializer=initializer()):
+    assert len(args) == 2, "just use for computing attention with two input"
+    arg0_shape = args[0].get_shape().as_list()
+    arg1_shape = args[1].get_shape().as_list()
+    if len(arg0_shape) != 3 or len(arg1_shape) != 3:
+        raise ValueError("`args` must be 3 dims (batch_size, len, dimension)")
+    if arg0_shape[2] != arg1_shape[2]:
+        raise ValueError("the last dimension of `args` must equal")
+    arg_size = arg0_shape[2]
+    dtype = args[0].dtype
+    droped_args = [tf.nn.dropout(arg, input_keep_prob) for arg in args]
+    with tf.variable_scope(scope):
+        weights4arg0 = tf.get_variable(
+            "linear_kernel4arg0", [arg_size, 1],
+            dtype=dtype,
+            regularizer=regularizer,
+            initializer=kernel_initializer)
+        weights4arg1 = tf.get_variable(
+            "linear_kernel4arg1", [arg_size, 1],
+            dtype=dtype,
+            regularizer=regularizer,
+            initializer=kernel_initializer)
+        weights4mlu = tf.get_variable(
+            "linear_kernel4mul", [1, 1, arg_size],
+            dtype=dtype,
+            regularizer=regularizer,
+            initializer=kernel_initializer)
+        biases = tf.get_variable(
+            "linear_bias", [1],
+            dtype=dtype,
+            regularizer=regularizer,
+            initializer=bias_initializer)
+        subres0 = tf.tile(dot(droped_args[0], weights4arg0), [1, 1, q_maxlen])
+        subres1 = tf.tile(tf.transpose(dot(droped_args[1], weights4arg1), perm=(0, 2, 1)), [1, c_maxlen, 1])
+        subres2 = batch_dot(droped_args[0] * weights4mlu, tf.transpose(droped_args[1], perm=(0, 2, 1)))
+        res = subres0 + subres1 + subres2
+        nn_ops.bias_add(res, biases)
+        return res
+
+
+def ndim(x):
+    """Copied from keras==2.0.6
+    Returns the number of axes in a tensor, as an integer.
+    # Arguments
+        x: Tensor or variable.
+    # Returns
+        Integer (scalar), number of axes.
+    # Examples
+    ```python
+        #>>> from keras import backend as K
+        #>>> inputs = K.placeholder(shape=(2, 4, 5))
+        #>>> val = np.array([[1, 2], [3, 4]])
+        #>>> kvar = K.variable(value=val)
+        #>>> K.ndim(inputs)
+        3
+        #>>> K.ndim(kvar)
+        2
+    ```
+    """
+    dims = x.get_shape()._dims
+    if dims is not None:
+        return len(dims)
+    return None
+
+
+def dot(x, y):
+    """Modified from keras==2.0.6
+    Multiplies 2 tensors (and/or variables) and returns a *tensor*.
+    When attempting to multiply a nD tensor
+    with a nD tensor, it reproduces the Theano behavior.
+    (e.g. `(2, 3) * (4, 3, 5) -> (2, 4, 5)`)
+    # Arguments
+        x: Tensor or variable.
+        y: Tensor or variable.
+    # Returns
+        A tensor, dot product of `x` and `y`.
+    """
+    if ndim(x) is not None and (ndim(x) > 2 or ndim(y) >2):
+        x_shape = []
+        for i, s in zip(x.get_shape().as_list(), tf.unstack(tf.shape(x))):
+            if i is not None:
+                x_shape.append(i)
+            else:
+                x_shape.append(x)
+        x_shape = tuple(x_shape)
+        y_shape = []
+        for i, s in zip(y.get_shape().as_list(), tf.unstack(tf.shape(y))):
+            if i is not None:
+                y_shape.append(i)
+            else:
+                y_shape.append(s)
+        y_shape = tuple(y_shape)
+        y_permute_dim = list(range(ndim(y)))
+        y_permute_dim = [y_permute_dim.pop(-2)] + y_permute_dim
+        xt = tf.reshape(x, [-1, x_shape[-1]])
+        yt = tf.reshape(tf.transpose(y, perm=y_permute_dim), [y_shape[-2], -1])
+        return tf.reshape(tf.matmul(xt, yt), x_shape[:-1] + y_shape[:-2] + y_shape[-1:])
+
+    if isinstance(x, tf.SparseTensor):
+        out = tf.sparse_tensor_dense_matmul(x, y)
+    else:
+        out = tf.matmul(x, y)
+    return out
+
+
+
