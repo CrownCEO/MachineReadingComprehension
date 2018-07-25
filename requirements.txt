@@ -3,3 +3,4 @@ tqdm
 spacy==2.0.9
 bottle
 tensorflow
+ujson
