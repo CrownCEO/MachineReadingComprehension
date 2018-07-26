@@ -104,7 +104,7 @@ def metric_max_over_ground_truths(metric_fn, prediction, ground_truths):
 
 
 def exact_match_score(prediction, ground_truth):
-    return (normalize_answer(prediction) == normalize_answer(ground_truth))
+    return normalize_answer(prediction) == normalize_answer(ground_truth)
 
 
 def f1_score(prediction, ground_truth):

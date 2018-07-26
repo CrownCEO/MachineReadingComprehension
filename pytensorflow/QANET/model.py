@@ -1,5 +1,5 @@
 import tensorflow as tf
-from .layers import regularizer, conv, highway, residual_block, optimized_trilinear_for_attention, mask_logits, total_params
+from pytensorflow.QANET.layers import regularizer, conv, highway, residual_block, optimized_trilinear_for_attention, mask_logits, total_params
 
 
 class Model(object):
