@@ -135,11 +135,14 @@ def get_embedding(counter, data_type, limit=-1, emb_file=None, size=None, vec_si
                 word = "".join(array[0:-vec_size])
                 # vector = [-0.082752, 0.67204, -0.14987, -0.064983, 0.056491, 0.40228,...]
                 vector = list(map(float, array[-vec_size:]))
+                # 给出现次数大于limit的单词用向量表示
+                # embedding_dict 存放的是每个词的向量
                 if word in counter and counter[word] > limit:
                     embedding_dict[word] = vector
         print("{} / {} tokens have corresponding {} embedding vector".format(
             len(embedding_dict), len(filtered_elements), data_type))
     else:
+        # 字母向量没有使用预训练向量而是使用随机正态分布
         assert vec_size is not None
         for token in filtered_elements:
             embedding_dict[token] = [np.random.normal(
@@ -149,10 +152,32 @@ def get_embedding(counter, data_type, limit=-1, emb_file=None, size=None, vec_si
 
     NULL = "--NULL--"
     OOV = "--OOV--"
-    token2idx_dict = {token: idx for idx,
-                                     token in enumerate(embedding_dict.keys(), 2)}
+    '''
+    token2idx_dict ：单词->索引
+    NULL:0
+    OOV:1
+    word:2
+    ...
+    embedding_dict : 单词->向量
+    NULL:[0,0,0,0,...]
+    OOV:[0,0,0,0,,...]
+    word:[-0.082752, 0.67204, -0.14987, -0.064983, ...]
+    ...
+    idx2emb_dict : 索引->向量
+    0:[0,0,0,0,...]
+    1:[0,0,0,0,...]
+    2:[-0.082752, 0.67204, -0.14987, -0.064983, ...]
+    ...
+    emb_mat : 所有的向量
+    [[0,0,0,0,...],
+     [0,0,0,0,,...],
+     [-0.082752, 0.67204, -0.14987, -0.064983, ...],]
+    '''
+    # 存放的是单词和索引
+    token2idx_dict = {token: idx for idx, token in enumerate(embedding_dict.keys(), 2)}
     token2idx_dict[NULL] = 0
     token2idx_dict[OOV] = 1
+    # 生成一个 300维的0向量 保持和单词的向量维度一样
     embedding_dict[NULL] = [0. for _ in range(vec_size)]
     embedding_dict[OOV] = [0. for _ in range(vec_size)]
     idx2emb_dict = {idx: embedding_dict[token]
@@ -222,12 +247,18 @@ def convert_to_features(config, data, word2idx_dict, char2idx_dict):
     return context_idxs, context_char_idxs, ques_idxs, ques_char_idxs
 
 
+# 构建特征存储到records文件中返回 meta信息（问题的个数）
 def build_features(config, examples, data_type, out_file, word2idx_dict, char2idx_dict, is_test=False):
+    # 为什么 test 和其他不一样 1000，400
     para_limit = config.test_para_limit if is_test else config.para_limit
+    # 100，50
     ques_limit = config.test_ques_limit if is_test else config.ques_limit
+    # 100，30
     ans_limit = 100 if is_test else config.ans_limit
+    # 16
     char_limit = config.char_limit
 
+    # 去掉段落，问题，答案，长度超过设置的
     def filter_func(example, is_test=False):
         return len(example["context_tokens"]) > para_limit or \
                len(example["ques_tokens"]) > ques_limit or \
@@ -245,14 +276,20 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
             continue
 
         total += 1
+        # 每个原文长度限制为para_limit 个单词
         context_idxs = np.zeros([para_limit], dtype=np.int32)
+        # 每个原文中每个单词的字母长度限制为char_limit
         context_char_idxs = np.zeros([para_limit, char_limit], dtype=np.int32)
+        # 每个问题长度限制为ques_limit 个单词
         ques_idxs = np.zeros([ques_limit], dtype=np.int32)
+        # 每个问题中的每个单词字母长度限制为char_limit
         ques_char_idxs = np.zeros([ques_limit, char_limit], dtype=np.int32)
         y1 = np.zeros([para_limit], dtype=np.float32)
         y2 = np.zeros([para_limit], dtype=np.float32)
 
+        # 根据单词的不同形式 返回它的索引
         def _get_word(word):
+            # capitalize()将字符串的第一个字母变成大写,其他字母变小写
             for each in (word, word.lower(), word.capitalize(), word.upper()):
                 if each in word2idx_dict:
                     return word2idx_dict[each]
@@ -263,9 +300,11 @@ def build_features(config, examples, data_type, out_file, word2idx_dict, char2id
                 return char2idx_dict[char]
             return 1
 
+        # context_idxs 存放的是原文中每个位置对应的单词索引
         for i, token in enumerate(example["context_tokens"]):
             context_idxs[i] = _get_word(token)
 
+        # ques_idxs 存放的是问题中每个位置对应的单词索引
         for i, token in enumerate(example["ques_tokens"]):
             ques_idxs[i] = _get_word(token)
 
@@ -309,6 +348,7 @@ def save(filename, obj, message=None):
 
 def prepro(config):
     word_counter, char_counter = Counter(), Counter()
+    # train_examples是整个文件中问题的信息，train_eval是没有处理之前的一些问题的信息
     train_examples, train_eval = process_file(
         config.train_file, "train", word_counter, char_counter)
     dev_examples, dev_eval = process_file(
@@ -326,6 +366,13 @@ def prepro(config):
     char_emb_mat, char2idx_dict = get_embedding(
         char_counter, "char", emb_file=char_emb_file, size=char_emb_size, vec_size=char_emb_dim)
 
+    '''
+    word2idx_dict是 单词->索引 
+    NULL:0
+    OOV:1
+    word:2
+    char2idx_dict类似
+    '''
     build_features(config, train_examples, "train",
                    config.train_record_file, word2idx_dict, char2idx_dict)
     dev_meta = build_features(config, dev_examples, "dev",
@@ -333,12 +380,19 @@ def prepro(config):
     test_meta = build_features(config, test_examples, "test",
                                config.test_record_file, word2idx_dict, char2idx_dict, is_test=True)
 
+    # 存放的是单词向量 N * 300
     save(config.word_emb_file, word_emb_mat, message="word embedding")
+    # 存放的是字母向量 M * 64维度
     save(config.char_emb_file, char_emb_mat, message="char embedding")
+    # _eval存放的是原文,spans, 答案 和 uuid
     save(config.train_eval_file, train_eval, message="train eval")
     save(config.dev_eval_file, dev_eval, message="dev eval")
     save(config.test_eval_file, test_eval, message="test eval")
+    # 存放的是 dev 问题个数
     save(config.dev_meta, dev_meta, message="dev meta")
+    # 存放的是 test 问题个数
     save(config.test_meta, test_meta, message="test meta")
+    # 存放的是 单词->索引 已经去重 {",":2,".":3,"the":4,"and":5,"to":6,"of":7,"a":8,"in":9,"\...}
     save(config.word_dictionary, word2idx_dict, message="word dictionary")
+    # 存放的是 字母->索引 已经去重： {"A":2,"r":3,"c":4,"h":5,"i":6,"t":7,"e":8,...}
     save(config.char_dictionary, char2idx_dict, message="char dictionary")

@@ -42,6 +42,7 @@ def train(config):
 
         model = Model(config, iterator, word_mat, char_mat, graph = g)
 
+        # 如果你指定的设备不存在，允许TF自动分配设备
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True
 

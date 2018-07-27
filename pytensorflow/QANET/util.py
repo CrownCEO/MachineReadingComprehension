@@ -38,6 +38,7 @@ def get_record_parser(config, is_test=False):
 
 def get_batch_dataset(record_file, parser, config):
     num_threads = tf.constant(config.num_threads, dtype=tf.int32)
+    # 读取一定的数据打乱顺序 然后再读取 再打乱直到读取了所有的数据 （应该是这样吧）
     dataset = tf.data.TFRecordDataset(record_file).map(
         parser, num_parallel_calls=num_threads).shuffle(config.capacity).repeat()
     if config.is_bucket:
