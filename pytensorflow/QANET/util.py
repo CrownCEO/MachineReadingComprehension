@@ -123,12 +123,15 @@ def f1_score(prediction, ground_truth):
 
 def normalize_answer(s):
 
+    # “不幸的是，很多单词里包含hi这两个连续的字符，比如him,history,high等等。用hi来查找的话，这里边的hi也会被找出来。
+    # 如果要精确地查找hi这个单词的话，我们应该使用\bhi\b。
     def remove_articles(text):
         return re.sub(r'\b(a|an|the)\b', ' ', text)
 
     def white_space_fix(text):
         return ' '.join(text.split())
 
+    # string.punctuation指的是所有的标点
     def remove_punc(text):
         exclude = set(string.punctuation)
         return ''.join(ch for ch in text if ch not in exclude)

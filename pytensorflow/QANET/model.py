@@ -14,26 +14,31 @@ class Model(object):
                                                initializer=tf.constant_initializer(0), trainable=False)
             self.dropout = tf.placeholder_with_default(0.0, (), name="dropout")
             if self.demo:
-                self.c = tf.placeholder(tf.int32, [None, config.test_para_limit],"context")
-                self.q = tf.placeholder(tf.int32, [None, config.test_ques_limit],"question")
-                self.ch = tf.placeholder(tf.int32, [None, config.test_para_limit, config.char_limit],"context_char")
-                self.qh = tf.placeholder(tf.int32, [None, config.test_ques_limit, config.char_limit],"question_char")
-                self.y1 = tf.placeholder(tf.int32, [None, config.test_para_limit],"answer_index1")
-                self.y2 = tf.placeholder(tf.int32, [None, config.test_para_limit],"answer_index2")
+                self.c = tf.placeholder(tf.int32, [None, config.test_para_limit], "context")
+                self.q = tf.placeholder(tf.int32, [None, config.test_ques_limit], "question")
+                self.ch = tf.placeholder(tf.int32, [None, config.test_para_limit, config.char_limit], "context_char")
+                self.qh = tf.placeholder(tf.int32, [None, config.test_ques_limit, config.char_limit], "question_char")
+                self.y1 = tf.placeholder(tf.int32, [None, config.test_para_limit], "answer_index1")
+                self.y2 = tf.placeholder(tf.int32, [None, config.test_para_limit], "answer_index2")
             else:
+                # 分别是原文单词索引，问题单词索引，原文字母索引，问题字母索引，答案起始位置，答案结束位置，问题id
                 self.c, self.q, self.ch, self.qh, self.y1, self.y2, self.qa_id = batch.get_next()
+
+            # self.word_unk = tf.get_variable("word_unk", shape = [config.glove_dim], initializer=initializer())
             self.word_mat = tf.get_variable("word_mat", initializer=tf.constant(
-                word_mat, dtype=tf.float32), trainable=False)
+                    word_mat, dtype=tf.float32), trainable=False)
             self.char_mat = tf.get_variable(
-                "char_mat", initializer=tf.constant(char_mat, dtype=tf.float32))
-            # 应该是先计算完长度 再转换为bool吧
+                    "char_mat", initializer=tf.constant(char_mat, dtype=tf.float32))
+            # 转换为bool 再转换为int32 是为了将 数据转换为 0，1序列
             self.c_mask = tf.cast(self.c, tf.bool)
             self.q_mask = tf.cast(self.q, tf.bool)
             self.c_len = tf.reduce_sum(tf.cast(self.c_mask, tf.int32), axis=1)
             self.q_len = tf.reduce_sum(tf.cast(self.q_mask, tf.int32), axis=1)
 
             if opt:
+                # 32，16
                 N, CL = config.batch_size if not self.demo else 1, config.char_limit
+                # 计算各个维度上元素最大值，在这里是返回batch 中原文最长的长度
                 self.c_maxlen = tf.reduce_max(self.c_len)
                 self.q_maxlen = tf.reduce_max(self.q_len)
                 self.c = tf.slice(self.c, [0, 0], [N, self.c_maxlen])
@@ -42,16 +47,16 @@ class Model(object):
                 self.q_mask = tf.slice(self.q_mask, [0, 0], [N, self.q_maxlen])
                 self.ch = tf.slice(self.ch, [0, 0, 0], [N, self.c_maxlen, CL])
                 self.qh = tf.slice(self.qh, [0, 0, 0], [N, self.q_maxlen, CL])
+                # y1, y2 里面值是什么
                 self.y1 = tf.slice(self.y1, [0, 0], [N, self.c_maxlen])
                 self.y2 = tf.slice(self.y2, [0, 0], [N, self.c_maxlen])
             else:
                 self.c_maxlen, self.q_maxlen = config.para_limit, config.ques_limit
 
             self.ch_len = tf.reshape(tf.reduce_sum(
-                tf.cast(tf.cast(self.ch, tf.bool), tf.int32), axis=2), [-1])
+                    tf.cast(tf.cast(self.ch, tf.bool), tf.int32), axis=2), [-1])
             self.qh_len = tf.reshape(tf.reduce_sum(
-                tf.cast(tf.cast(self.qh, tf.bool), tf.int32), axis=2), [-1])
-
+                    tf.cast(tf.cast(self.qh, tf.bool), tf.int32), axis=2), [-1])
             self.forward()
             total_params()
 
@@ -69,7 +74,8 @@ class Model(object):
 
     def forward(self):
         config = self.config
-        # 代码是不是有问题 c_maxlen 应该是对应CL吧
+        # PL 代表 para_length 和c_maxlen是一个东西
+        # PL=400 QL=50 CL=16 d=96 dc=64
         N, PL, QL, CL, d, dc, nh = config.batch_size if not self.demo else 1, self.c_maxlen, self.q_maxlen, config.char_limit, config.hidden, config.char_dim, config.num_heads
 
         # variable_scope/name_scope简介这种scope最直接的影响是: 所有在scope下面创建的variable都会把这个scope的名字作为前缀
@@ -79,9 +85,12 @@ class Model(object):
         # character embedding随机初始化，维度为p2，在此基础上将每个词维度padding or truncating为k，则每个词可以表示成一个p2∗k的矩阵，
         # 经过卷积和max - pooling后得到一个p2维的character - level的词向量，记为xc。
         # 将xw​和xc​拼接，得到w对应词向量[xw;xc]∈R(p1 + p2)​，最后将拼接的词向量通过一个两层的highway network，其输出即为embedding层的输出。
-        with tf.variable_scope("Input_Embedding_layer"):
-            ch_emb = tf.reshape(tf.nn.embedding_lookup(self.char_mat, self.ch), [N * PL, CL, dc])
-            qh_emb = tf.reshape(tf.nn.embedding_lookup(self.char_mat, self.qh), [N * QL, CL, dc])
+        with tf.variable_scope("Input_Embedding_Layer"):
+            # ch_emb 和 qh_emb 之所以 传进去 char_mat  是因为 ch和qh都是字母索引
+            ch_emb = tf.reshape(tf.nn.embedding_lookup(
+                self.char_mat, self.ch), [N * PL, CL, dc])
+            qh_emb = tf.reshape(tf.nn.embedding_lookup(
+                self.char_mat, self.qh), [N * QL, CL, dc])
             ch_emb = tf.nn.dropout(ch_emb, 1.0 - 0.5 * self.dropout)
             qh_emb = tf.nn.dropout(qh_emb, 1.0 - 0.5 * self.dropout)
 
