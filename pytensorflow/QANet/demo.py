@@ -8,7 +8,7 @@ import threading
 import json
 import numpy as np
 
-from pytensorflow.QANET.prepro import convert_to_features, word_tokenize
+from pytensorflow.QANet.prepro import convert_to_features, word_tokenize
 from time import sleep
 
 '''

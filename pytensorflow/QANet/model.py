@@ -1,5 +1,5 @@
 import tensorflow as tf
-from pytensorflow.QANET.layers import regularizer, conv, highway, residual_block, optimized_trilinear_for_attention, mask_logits, total_params
+from pytensorflow.QANet.layers import regularizer, conv, highway, residual_block, optimized_trilinear_for_attention, mask_logits, total_params
 
 
 class Model(object):
@@ -171,6 +171,7 @@ class Model(object):
         # 目标函数：
         # L(θ)=−1N∑iN[log(p1y1i)+log(p2y2i)]
         # 其中y1i、y2i分别为第i个样本的groudtruth的起始位置和结束位置。
+        # 对测试集进行预测时，span(s, e)的选取规则是：p1s、p2e最大且s≤e。
         with tf.variable_scope("Output_Layer"):
             start_logits = tf.squeeze(
                 conv(tf.concat([self.enc[1], self.enc[2]], axis=-1), 1, bias=False, name="start_pointer"), -1)
@@ -181,8 +182,12 @@ class Model(object):
 
             logits1, logits2 = [l for l in self.logits]
 
+            # 还没搞太懂
             outer = tf.matmul(tf.expand_dims(tf.nn.softmax(logits1), axis=2),
                               tf.expand_dims(tf.nn.softmax(logits2), axis=1))
+            # input：张量。秩为 k 的张量。
+            # num_lower：int64 类型的张量；0-D 张量；要保持的对角线的数量；如果为负，则保留整个下三角。
+            # num_upper：int64 类型的张量；0-D 张量；要保留的 superdiagonals 数；如果为负，则保持整个上三角。
             outer = tf.matrix_band_part(outer, 0, config.ans_limit)
             self.yp1 = tf.argmax(tf.reduce_max(outer, axis=2), axis=1)
             self.yp2 = tf.argmax(tf.reduce_max(outer, axis=1), axis=1)
