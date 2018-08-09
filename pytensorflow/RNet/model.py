@@ -2,7 +2,13 @@ import tensorflow as tf
 from params import Params
 
 from pytensorflow.RNet.GRU import SRUCell, GRUCell, gated_attention_Wrapper
-from pytensorflow.RNet.layers import encoding, bidirectional_GRU, apply_dropout, attention_rnn
+from pytensorflow.RNet.layers import get_attn_params, encoding, bidirectional_GRU, apply_dropout, attention_rnn, \
+    pointer_net, cross_entropy, total_params
+
+optimizer_factory = {"adadelta": tf.train.AdadeltaOptimizer,
+                     "adam": tf.train.AdamOptimizer,
+                     "gradientdescent": tf.train.GradientDescentOptimizer,
+                     "adagrad": tf.train.AdagradOptimizer}
 
 
 class Model(object):
@@ -39,6 +45,13 @@ class Model(object):
 
             self.passage_w_len = tf.squeeze(self.passage_w_len_, -1)
             self.question_w_len = tf.squeeze(self.question_w_len_, -1)
+            self.forward()
+
+            if is_training:
+                self.loss_function()
+                self.summary()
+                self.init_op = tf.gloabal_variables_initialzer()
+            total_params()
 
     def forward(self):
         with tf.device('/cpu:0'):
@@ -96,6 +109,7 @@ class Model(object):
                                                    output=0,
                                                    is_training=self.is_training)
 
+        self.params = get_attn_params(Params.attn_size, initializer=tf.contrib.layers.xavier_initializer)
         # Apply gated attention recurrent network for both query-passage matching and self matching networks
         with tf.variable_scope("gated_attention_based_recurrent_networks"):
             memory = self.question_encoding
@@ -126,3 +140,56 @@ class Model(object):
                                        scope=scopes[i])
                 memory = inputs  # self matching (attention over itself)
             self.self_matching_output = inputs
+        self.final_bidirectional_outputs = bidirectional_GRU(self.self_matching_output, self.passage_w_len,
+                                                             cell_fn=SRUCell if Params.SRU else GRUCell,
+                                                             scope="bidirectional_readout",
+                                                             output=0, is_training=self.is_training)
+
+        # pointer networks
+        params = (([self.params["W_u_Q"], self.params["W_v_Q"]], self.params["v"]),
+                  ([self.params["W_h_P"], self.params["W_h_a"]], self.params["v"]))
+        cell = apply_dropout(GRUCell(Params.attn_size * 2), size=self.final_bidirectional_outputs.shape[-1],
+                             is_training=self.is_training)
+        self.points_logits = pointer_net(self.final_bidirectional_outputs, self.passage_w_len,
+                                         self.question_encoding, self.question_w_len, cell, params,
+                                         scope="pointer_network")
+
+        self.logit_1, self.logit_2 = tf.split(self.points_logits, 2, axis=1)
+        self.logit_1 = tf.transpose(self.logit_1, [0, 2, 1])
+        self.dp = tf.matmul(self.logit_1, self.logit_2)
+        self.dp = tf.matrix_band_part(self.dp, 0, 15)
+        self.output_index_1 = tf.argmax(tf.reduce_max(self.dp, axis=2), -1)
+        self.output_index_2 = tf.argmax(tf.reduce_max(self.dp, axis=1), -1)
+        self.output_index = tf.stack([self.output_index_1, self.output_index_2], axis=1)
+        # self.output_index = tf.argmax(self.points_logits, axis = 2)
+
+    def loss_function(self):
+        with tf.variable_scope("loss"):
+            shapes = self.passage_w.shape
+            self.indices_prob = tf.one_hot(self.indices, shapes[1])
+            self.mean_loss = cross_entropy(self.points_logits, self.indices_prob)
+            self.optimizer = optimizer_factory[Params.optimizer](**Params.opt_arg[Params.optimizer])
+
+            if Params.clip:
+                # gradient clipping by norm
+                gradients, variables = zip(*self.optimizer.compute_gradients(self.mean_loss))
+                gradients, _ = tf.clip_by_global_norm(gradients, Params.norm)
+                self.train_op = self.optimizer.apply_gradients(zip(gradients, variables), global_step=self.global_step)
+            else:
+                self.train_op = self.optimizer.minimize(self.mean_loss, global_step=self.global_step)
+
+    def summary(self):
+        self.F1 = tf.Variable(tf.constant(0.0, shape=(), dtype=tf.float32), trainable=False, name="F1")
+        self.F1_placeholder = tf.placeholder(tf.float32, shape=(), name="F1_placeholder")
+        self.EM = tf.Variable(tf.constant(0.0, shape=(), dtype=tf.float32), trainable=False, name="EM")
+        self.EM_placeholder = tf.placeholder(tf.float32, shape=(), name="EM_placeholder")
+        self.dev_loss = tf.Variable(tf.constant(5.0, shape=(), dtype=tf.float32), trainable=False, name="dev_loss")
+        self.dev_loss_placeholder = tf.placeholder(tf.float32, shape=(), name="dev_loss")
+        self.metric_assign = tf.group(tf.assign(self.F1, self.F1_placeholder), tf.assign(self.EM, self.EM_placeholder),
+                                      tf.assign(self.dev_loss, self.dev_loss_placeholder))
+        tf.summary.scalar('loss_training', self.mean_loss)
+        tf.summary.scalar('loss_dev', self.dev_loss)
+        tf.summary.scalar("F1_Score", self.F1)
+        tf.summary.scalar("Exact_Match", self.EM)
+        tf.summary.scalar('learning_rate', Params.opt_arg[Params.optimizer]['learning_rate'])
+        self.merged = tf.summary.merge_all()

@@ -5,6 +5,38 @@ from params import Params
 from zoneout import ZoneoutWrapper
 
 
+def get_attn_params(attn_size, initializer=tf.truncated_normal_initializer):
+    """
+    Args:
+        attn_size: the size of attention specified in https://www.microsoft.com/en-us/research/wp-content/uploads/2017/05/r-net.pdf
+        initializer: the author of the original paper used gaussian initialization however I found xavier converge faster
+    Returns:
+        params: A collection of parameters used throughout the layers
+    """
+    with tf.variable_scope("attention_weights"):
+        params = {"W_u_Q": tf.get_variable("W_u_Q", dtype=tf.float32, shape=(2 * attn_size, attn_size),
+                                           initializer=initializer()),
+                  # "W_ru_Q":tf.get_variable("W_ru_Q",dtype = tf.float32, shape = (2 * attn_size, 2 * attn_size), initializer = initializer()),
+                  "W_u_P": tf.get_variable("W_u_P", dtype=tf.float32, shape=(2 * attn_size, attn_size),
+                                           initializer=initializer()),
+                  "W_v_P": tf.get_variable("W_v_P", dtype=tf.float32, shape=(attn_size, attn_size),
+                                           initializer=initializer()),
+                  "W_v_P_2": tf.get_variable("W_v_P_2", dtype=tf.float32, shape=(2 * attn_size, attn_size),
+                                             initializer=initializer()),
+                  "W_g": tf.get_variable("W_g", dtype=tf.float32, shape=(4 * attn_size, 4 * attn_size),
+                                         initializer=initializer()),
+                  "W_h_P": tf.get_variable("W_h_P", dtype=tf.float32, shape=(2 * attn_size, attn_size),
+                                           initializer=initializer()),
+                  "W_v_Phat": tf.get_variable("W_v_Phat", dtype=tf.float32, shape=(2 * attn_size, attn_size),
+                                              initializer=initializer()),
+                  "W_h_a": tf.get_variable("W_h_a", dtype=tf.float32, shape=(2 * attn_size, attn_size),
+                                           initializer=initializer()),
+                  "W_v_Q": tf.get_variable("W_v_Q", dtype=tf.float32, shape=(attn_size, attn_size),
+                                           initializer=initializer()),
+                  "v": tf.get_variable("v", dtype=tf.float32, shape=(attn_size), initializer=initializer())}
+        return params
+
+
 def encoding(word, char, word_embeddings, char_embeddings, scope="embedding"):
     with tf.variable_scope(scope):
         word_encoding = tf.nn.embedding_lookup(word_embeddings, word)
@@ -132,3 +164,61 @@ def attention_rnn(inputs, inputs_len, units, attn_cell, bidirection=True, scope=
                                            sequence_length=inputs_len,
                                            dtype=tf.float32)
         return outputs
+
+
+def question_pooling(memory, units, weights, memory_len=None, scope="question_pooling"):
+    with tf.variable_scope(scope):
+        shapes = memory.get_shape().as_list()
+        V_r = tf.get_variable("question_param", shape=(Params.max_q_len, units),
+                              initializer=tf.contrib.layers.xavier_initializer(), dtype=tf.float32)
+        inputs_ = [memory, V_r]
+        attn = attention(inputs_, units, weights, memory_len=memory_len, scope="question_attention_pooling")
+        attn = tf.expand_dims(attn, -1)
+        return tf.reduce_sum(attn * memory, 1)
+
+
+def pointer_net(passage, passage_len, question, question_len, cell, params, scope="pointer_network"):
+    """
+    Answer pointer network as proposed in https://arxiv.org/pdf/1506.03134.pdf.
+    Args:
+        passage:        RNN passage output from the bidirectional readout layer (batch_size, timestep, dim)
+        passage_len:    variable lengths for passage length
+        question:       RNN question output of shape (batch_size, timestep, dim) for question pooling
+        question_len:   Variable lengths for question length
+        cell:           rnn cell of type RNN_Cell.
+        params:         Appropriate weight matrices for attention pooling computation
+    Returns:
+        softmax logits for the answer pointer of the beginning and the end of the answer span
+    """
+    with tf.variable_scope(scope):
+        weights_q, weights_p = params
+        shapes = passage.get_shape().as_list()
+        initial_state = question_pooling(question, units=Params.attn_size, weights=weights_q, memory_len=question_len,
+                                         scope="question_pooling")
+        inputs = [passage, initial_state]
+        p1_logits = attention(inputs, Params.attn_size, weights_p, memory_len=passage_len, scope="attention")
+        scores = tf.expand_dims(p1_logits, -1)
+        attention_pool = tf.reduce_sum(scores * passage, 1)
+        _, state = cell(attention_pool, initial_state)
+        inputs = [passage, state]
+        p2_logits = attention(inputs, Params.attn_size, weights_p, memory_len=passage_len, scope="attention",
+                              reuse=True)
+        return tf.stack((p1_logits, p2_logits), 1)
+
+
+def cross_entropy(output, target):
+    cross_entropy = target * tf.log(output + 1e-8)
+    cross_entropy = -tf.reduce_sum(cross_entropy, 2)  # sum across passage timestep
+    cross_entropy = tf.reduce_mean(cross_entropy, 1)  # average across pointer networks output
+    return tf.reduce_mean(cross_entropy)  # average across batch size
+
+
+def total_params():
+    total_parameters = 0
+    for variable in tf.trainable_variables():
+        shape = variable.get_shape()
+        variable_parameters = 1
+        for dim in shape:
+            variable_parameters *= dim.value
+        total_parameters += variable_parameters
+    print("Total number of trainable parameters: {}".format(total_parameters))
