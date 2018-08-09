@@ -111,7 +111,7 @@ def highway(x, size=None, activation=None, num_layers=2, scope="highway", dropou
 
 def residual_block(inputs, num_blocks, num_conv_layers, kernel_size, mask=None, num_filters=128, input_projection=False,
                    num_heads=8,
-                   seq_len=None, scope="res_block", is_training=True, reuse=None, bias=True, dropout=0.0):
+                   seq_len=None, scope="res_block", is_training=True, reuse=None, bias=False, dropout=0.0):
     with tf.variable_scope(scope, reuse=reuse):
         if input_projection:
             inputs = conv(inputs, num_filters, name="input_projection", reuse=reuse)
@@ -396,9 +396,9 @@ def combine_last_two_dimensions(x):
 # 计算相似性矩阵 传递过来的args 中 包括 c, q,
 # 计算公式为 f(q,c)=W0[q,c,q⊙c]
 def optimized_trilinear_for_attention(args, c_maxlen, q_maxlen, input_keep_prob=1.0,
-    scope='efficient_trilinear',
-    bias_initializer=tf.zeros_initializer(),
-    kernel_initializer=initializer()):
+                                      scope='efficient_trilinear',
+                                      bias_initializer=tf.zeros_initializer(),
+                                      kernel_initializer=initializer()):
     assert len(args) == 2, "just use for computing attention with two input"
     arg0_shape = args[0].get_shape().as_list()
     arg1_shape = args[1].get_shape().as_list()

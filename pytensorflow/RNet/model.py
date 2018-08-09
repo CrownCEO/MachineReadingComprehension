@@ -1,8 +1,8 @@
 import tensorflow as tf
 from params import Params
 
-from pytensorflow.RNet.GRU import SRUCell, gated_attention_Wrapper
-from pytensorflow.RNet.layers import encoding, bidirectional_GRU, apply_dropout
+from pytensorflow.RNet.GRU import SRUCell, GRUCell, gated_attention_Wrapper
+from pytensorflow.RNet.layers import encoding, bidirectional_GRU, apply_dropout, attention_rnn
 
 
 class Model(object):
@@ -86,7 +86,8 @@ class Model(object):
                                                   scope="passage_encoding",
                                                   output=0,
                                                   is_training=self.is_training)
-        # cell = [MultiRNNCell([GRUCell(Params.attn_size, is_training = self.is_training) for _ in range(3)]) for _ in range(2)]
+        # cell = [MultiRNNCell([GRUCell(Params.attn_size, is_training = self.is_training) for _ in range(3)]) for _
+        # in range(2)]
         self.question_encoding = bidirectional_GRU(self.question_encoding,
                                                    self.question_w_len,
                                                    cell_fn=SRUCell if Params.SRU else GRUCell,

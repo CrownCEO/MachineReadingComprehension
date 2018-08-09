@@ -57,6 +57,59 @@ class SRUCell(RNNCell):
         return h, c
 
 
+class GRUCell(RNNCell):
+    """Gated Recurrent Unit cell (cf. http://arxiv.org/abs/1406.1078)."""
+
+    def __init__(self,
+                 num_units,
+                 activation=None,
+                 reuse=None,
+                 kernel_initializer=None,
+                 bias_initializer=None,
+                 is_training=True):
+        super(GRUCell, self).__init__(_reuse=reuse)
+        self._num_units = num_units
+        self._activation = activation or math_ops.tanh
+        self._kernel_initializer = kernel_initializer
+        self._bias_initializer = bias_initializer
+        self._is_training = is_training
+
+    @property
+    def state_size(self):
+        return self._num_units
+
+    @property
+    def output_size(self):
+        return self._num_units
+
+    def __call__(self, inputs, state, scope=None):
+        """Gated recurrent unit (GRU) with nunits cells."""
+        if inputs.shape.as_list()[-1] != self._num_units:
+            with vs.variable_scope("projection"):
+                res = linear(inputs, self._num_units, False, )
+        else:
+            res = inputs
+        with vs.variable_scope("gates"):  # Reset gate and update gate.
+            # We start with bias of 1.0 to not reset and not update.
+            bias_ones = self._bias_initializer
+            if self._bias_initializer is None:
+                dtype = [a.dtype for a in [inputs, state]][0]
+                bias_ones = init_ops.constant_initializer(1.0, dtype=dtype)
+            value = math_ops.sigmoid(
+                linear([inputs, state], 2 * self._num_units, True, bias_ones,
+                       self._kernel_initializer))
+            r, u = array_ops.split(value=value, num_or_size_splits=2, axis=1)
+        with vs.variable_scope("candidate"):
+            c = self._activation(
+                linear([inputs, r * state], self._num_units, True,
+                       self._bias_initializer, self._kernel_initializer))
+        #   recurrent dropout as proposed in https://arxiv.org/pdf/1603.05118.pdf (currently disabled)
+        # if self._is_training and Params.dropout is not None:
+        # c = tf.nn.dropout(c, 1 - Params.dropout)
+        new_h = u * state + (1 - u) * c
+        return new_h + res, new_h
+
+
 class gated_attention_Wrapper(RNNCell):
     def __init__(self,
                  num_units,

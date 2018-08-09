@@ -78,3 +78,57 @@ def gated_attention(memory, inputs, states, units, params, self_matching=False, 
         inputs = tf.concat((inputs, attention_pool), axis=1)
         g_t = tf.sigmoid(tf.matmul(inputs, W_g))
         return g_t * inputs
+
+
+def attention(inputs, units, weights, scope="attention", memory_len=None, reuse=None):
+    with tf.variable_scope(scope, reuse=reuse):
+        outputs_ = []
+        weights, v = weights
+        for i, (inp, w) in enumerate(zip(inputs, weights)):
+            shapes = inp.shape.as_list()
+            inp = tf.reshape(inp, (-1, shapes[-1]))
+            if w is None:
+                w = tf.get_variable("w_%d" % i, dtype=tf.float32, shape=[shapes[-1], Params.attn_size],
+                                    initializer=tf.contrib.layers.xavier_initializer())
+            outputs = tf.matmul(inp, w)
+            # Hardcoded attention output reshaping. Equation (4), (8), (9) and (11) in the original paper.
+            if len(shapes) > 2:
+                outputs = tf.reshape(outputs, (shapes[0], shapes[1], -1))
+            elif len(shapes) == 2 and shapes[0] is Params.batch_size:
+                outputs = tf.reshape(outputs, (shapes[0], 1, -1))
+            else:
+                outputs = tf.reshape(outputs, (1, shapes[0], -1))
+            outputs_.append(outputs)
+        outputs = sum(outputs_)
+        if Params.bias:
+            b = tf.get_variable("b", shape=outputs.shape[-1], dtype=tf.float32,
+                                initializer=tf.contrib.layers.xavier_initializer())
+            outputs += b
+        scores = tf.reduce_sum(tf.tanh(outputs) * v, [-1])
+        if memory_len is not None:
+            scores = mask_attn_score(scores, memory_len)
+        return tf.nn.softmax(scores)  # all attention output is softmaxed now
+
+
+def mask_attn_score(score, memory_sequence_length, score_mask_value=-1e8):
+    score_mask = tf.sequence_mask(
+        memory_sequence_length, maxlen=score.shape[1])
+    score_mask_values = score_mask_value * tf.ones_like(score)
+    return tf.where(score_mask, score, score_mask_values)
+
+
+def attention_rnn(inputs, inputs_len, units, attn_cell, bidirection=True, scope="gated_attention_rnn",
+                  is_training=True):
+    with tf.variable_scope(scope):
+        if bidirection:
+            outputs = bidirectional_GRU(inputs,
+                                        inputs_len,
+                                        cell=attn_cell,
+                                        scope=scope + "_bidirectional",
+                                        output=0,
+                                        is_training=is_training)
+        else:
+            outputs, _ = tf.nn.dynamic_rnn(attn_cell, inputs,
+                                           sequence_length=inputs_len,
+                                           dtype=tf.float32)
+        return outputs
