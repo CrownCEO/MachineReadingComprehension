@@ -10,8 +10,8 @@ https://github.com/HKUST-KnowComp/R-Net
 '''
 
 from pytensorflow.QANet.model import Model
-from pytensorflow.QANet.demo import Demo
-from pytensorflow.QANet.util import get_record_parser, convert_tokens, evaluate, get_batch_dataset, get_dataset
+from pytensorflow.demo import Demo
+from pytensorflow.util import get_record_parser, convert_tokens, evaluate, get_batch_dataset, get_dataset
 
 
 def train(config):

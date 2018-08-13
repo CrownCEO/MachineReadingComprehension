@@ -3,12 +3,11 @@
 
 import tensorflow as tf
 import bottle
-from bottle import route, run
 import threading
 import json
 import numpy as np
 
-from pytensorflow.QANet.prepro import convert_to_features, word_tokenize
+from pytensorflow.prepro import convert_to_features, word_tokenize
 from time import sleep
 
 '''
@@ -20,11 +19,13 @@ app = bottle.Bottle()
 query = []
 response = ""
 
+
 @app.get("/")
 def home():
     with open('demo.html', 'r') as fl:
         html = fl.read()
         return html
+
 
 @app.post('/answer')
 def answer():
@@ -42,11 +43,12 @@ def answer():
     response = []
     return response_
 
+
 class Demo(object):
     def __init__(self, model, config):
         run_event = threading.Event()
         run_event.set()
-        threading.Thread(target=self.demo_backend, args = [model, config, run_event]).start()
+        threading.Thread(target=self.demo_backend, args=[model, config, run_event]).start()
         app.run(port=8080, host='0.0.0.0')
         try:
             while 1:
@@ -78,12 +80,12 @@ class Demo(object):
                     sleep(0.1)
                     if query:
                         context = word_tokenize(query[0].replace("''", '" ').replace("``", '" '))
-                        c,ch,q,qh = convert_to_features(config, query, word_dictionary, char_dictionary)
+                        c, ch, q, qh = convert_to_features(config, query, word_dictionary, char_dictionary)
                         fd = {'context:0': [c],
                               'question:0': [q],
                               'context_char:0': [ch],
                               'question_char:0': [qh]}
-                        yp1,yp2 = sess.run([model.yp1, model.yp2], feed_dict = fd)
+                        yp1, yp2 = sess.run([model.yp1, model.yp2], feed_dict=fd)
                         yp2[0] += 1
                         response = " ".join(context[yp1[0]:yp2[0]])
                         query = []

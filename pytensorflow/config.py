@@ -1,13 +1,12 @@
 import os
 import tensorflow as tf
-import sys
 
 '''
 This file is taken and modified from R-Net by HKUST-KnowComp
 https://github.com/HKUST-KnowComp/R-Net
 '''
 
-from pytensorflow.QANet.prepro import prepro
+from pytensorflow.prepro import prepro
 from pytensorflow.QANet.main import train, test, demo
 flags = tf.flags
 
