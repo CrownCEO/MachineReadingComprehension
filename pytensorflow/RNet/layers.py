@@ -66,6 +66,11 @@ class native_gru:
                 tf.zeros([1, num_units])), [batch_size, 1])
             init_bw = tf.tile(tf.Variable(
                 tf.zeros([1, num_units])), [batch_size, 1])
+            # 通常的，使用RNN的时候，我们需要指定num_step，也就是TensorFlow的roll
+            # step步数，但是对于变长的文本来说，指定num_step就不可避免的需要进行padding操作，TensorFlow使用了
+            # dynamic_padding方法实现自动padding，但是这还不够，因为在跑一遍RNN / LSTM之后，还是需要对padding部分的
+            # 内容进行删除，称之为“反padding”，无可避免的，我们就需要指定mask矩阵。很麻烦！而使用dynamic_rnn可以跳过
+            # padding部分的计算，减少计算量。
             mask_fw = dropout(tf.ones([batch_size, 1, input_size_], dtype=tf.float32),
                               keep_prob=keep_prob, is_train=is_train, mode=None)
             mask_bw = dropout(tf.ones([batch_size, 1, input_size_], dtype=tf.float32),

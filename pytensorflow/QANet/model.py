@@ -14,8 +14,11 @@ class Model(object):
                                                initializer=tf.constant_initializer(0), trainable=False)
             self.dropout = tf.placeholder_with_default(0.0, (), name="dropout")
             if self.demo:
+                # None代表N行 config.test_para_limit代表1000列 即1000个单词,所以self.c是一个N行1000列的矩阵
+                # self.c 和 self.q 存储的是单词的索引
                 self.c = tf.placeholder(tf.int32, [None, config.test_para_limit], "context")
                 self.q = tf.placeholder(tf.int32, [None, config.test_ques_limit], "question")
+                # N * 1000 * 16 N个段落，每个段落1000个单词，每个单词长度为16个字符   即 有N个1000 * 16 的向量
                 self.ch = tf.placeholder(tf.int32, [None, config.test_para_limit, config.char_limit], "context_char")
                 self.qh = tf.placeholder(tf.int32, [None, config.test_ques_limit, config.char_limit], "question_char")
                 self.y1 = tf.placeholder(tf.int32, [None, config.test_para_limit], "answer_index1")
@@ -32,13 +35,14 @@ class Model(object):
             # 转换为bool 再转换为int32 是为了将 数据转换为 0，1序列
             self.c_mask = tf.cast(self.c, tf.bool)
             self.q_mask = tf.cast(self.q, tf.bool)
+            # self.c_len 和 self.q_len 是N * 1 的
             self.c_len = tf.reduce_sum(tf.cast(self.c_mask, tf.int32), axis=1)
             self.q_len = tf.reduce_sum(tf.cast(self.q_mask, tf.int32), axis=1)
 
             if opt:
                 # 32，16
                 N, CL = config.batch_size if not self.demo else 1, config.char_limit
-                # 计算各个维度上元素最大值，在这里是返回batch 中原文最长的长度
+                # 计算0维度上元素最大值，在这里是返回batch 中原文最长的长度
                 self.c_maxlen = tf.reduce_max(self.c_len)
                 self.q_maxlen = tf.reduce_max(self.q_len)
                 self.c = tf.slice(self.c, [0, 0], [N, self.c_maxlen])
@@ -53,6 +57,7 @@ class Model(object):
             else:
                 self.c_maxlen, self.q_maxlen = config.para_limit, config.ques_limit
 
+            # self.ch_len self.qh_len 是一个向量 [N * c_maxlen]
             self.ch_len = tf.reshape(tf.reduce_sum(
                     tf.cast(tf.cast(self.ch, tf.bool), tf.int32), axis=2), [-1])
             self.qh_len = tf.reshape(tf.reduce_sum(
@@ -87,6 +92,8 @@ class Model(object):
         # 将xw​和xc​拼接，得到w对应词向量[xw;xc]∈R(p1 + p2)​，最后将拼接的词向量通过一个两层的highway network，其输出即为embedding层的输出。
         with tf.variable_scope("Input_Embedding_Layer"):
             # ch_emb 和 qh_emb 之所以 传进去 char_mat  是因为 ch和qh都是字母索引
+            # char_mat : M * 64    ch: N * c_maxlen * 16
+            # CL * dc 大小的矩阵 有 N * PL 个
             ch_emb = tf.reshape(tf.nn.embedding_lookup(
                 self.char_mat, self.ch), [N * PL, CL, dc])
             qh_emb = tf.reshape(tf.nn.embedding_lookup(
@@ -95,21 +102,26 @@ class Model(object):
             qh_emb = tf.nn.dropout(qh_emb, 1.0 - 0.5 * self.dropout)
 
             # Bidaf style conv-highway encoder
+            # [N * 400, 12, 96]
             ch_emb = conv(ch_emb, d, bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=None)
             qh_emb = conv(qh_emb, d, bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=True)
 
+            # [N * 400，1，96]
             ch_emb = tf.reduce_max(ch_emb, axis=1)
             qh_emb = tf.reduce_max(qh_emb, axis=1)
 
+            # [N ,400, 96]
             ch_emb = tf.reshape(ch_emb, [N, PL, ch_emb.shape[-1]])
             qh_emb = tf.reshape(qh_emb, [N, QL, ch_emb.shape[-1]])
 
+            # [N,400,300]
             c_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.c), 1.0 - self.dropout)
             q_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.q), 1.0 - self.dropout)
 
+            # [N,400,396]
             c_emb = tf.concat([c_emb, ch_emb], axis=2)
             q_emb = tf.concat([q_emb, qh_emb], axis=2)
-
+            # [N,400,96]
             c_emb = highway(c_emb, size=d, scope="highway", dropout=self.dropout, reuse=None)
             q_emb = highway(q_emb, size=d, scope="highway", dropout=self.dropout, reuse=True)
 

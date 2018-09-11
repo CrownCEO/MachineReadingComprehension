@@ -69,8 +69,10 @@ class Model(object):
                     ch_emb, keep_prob=config.keep_prob, is_train=self.is_train)
                 qh_emb = dropout(
                     qh_emb, keep_prob=config.keep_prob, is_train=self.is_train)
+                # GRU 是一LSTM的变种
                 cell_fw = tf.contrib.rnn.GRUCell(dg)
                 cell_bw = tf.contrib.rnn.GRUCell(dg)
+                # https://blog.csdn.net/cerisier/article/details/80135999 双向RNN bidirectional_dynamic_rnn
                 _, (state_fw, state_bw) = tf.nn.bidirectional_dynamic_rnn(
                     cell_fw, cell_bw, ch_emb, self.ch_len, dtype=tf.float32)
                 ch_emb = tf.concat([state_fw, state_bw], axis=1)

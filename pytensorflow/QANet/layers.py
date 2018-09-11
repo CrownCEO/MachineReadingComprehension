@@ -64,6 +64,7 @@ def layer_dropout(inputs, residual, dropout):
 # tensorflow中的tf.nn.conv2d函数，实际上相当于用filter，以一定的步长stride在image上进行滑动，计算重叠部分的内积和，即为卷积结果
 # input的shape: [batch, in_height, in_width, in_channels]
 # filter的shape: [filter_height, filter_width, in_channels, out_channels]
+# 在外面调用 传递进来的inputs.shape= [N * c_maxlen, 16, 64] output_size = 96
 def conv(inputs, output_size, bias=None, activation=None, kernel_size=1, name="conv", reuse=None):
     with tf.variable_scope(name, reuse=reuse):
         shapes = inputs.shape.as_list()
@@ -74,6 +75,8 @@ def conv(inputs, output_size, bias=None, activation=None, kernel_size=1, name="c
             bias_shape = [1, 1, 1, output_size]
             strides = [1, 1, 1, 1]
         else:
+            # kernel_size =5 shapes[-1]=64 output_size=96
+            # [5,64,96]
             filter_shape = [kernel_size, shapes[-1], output_size]
             bias_shape = [1, 1, output_size]
             strides = 1
@@ -81,6 +84,7 @@ def conv(inputs, output_size, bias=None, activation=None, kernel_size=1, name="c
         conv_func = tf.nn.conv1d if len(shapes) == 3 else tf.nn.conv2d
         kernel_ = tf.get_variable("kernel_", filter_shape, dtype=tf.float32, regularizer=regularizer,
                                   initializer=initializer_relu() if activation is not None else initializer())
+        # outputs shape: [N * c_maxlen, (16 - 5 + 1), 96] 等再看看
         outputs = conv_func(inputs, kernel_, strides, "VALID")
         if bias:
             outputs += tf.get_variable("bias_", bias_shape, regularizer=regularizer, initializer=tf.zeros_initializer())
@@ -94,10 +98,11 @@ def conv(inputs, output_size, bias=None, activation=None, kernel_size=1, name="c
 # highway Networks就是一种解决深层次网络训练困难的网络框架
 # 参看文章 highway networks https://arxiv.org/pdf/1505.00387.pdf
 # https://blog.csdn.net/sinat_35218236/article/details/73826203
+# 在此处size=96
 def highway(x, size=None, activation=None, num_layers=2, scope="highway", dropout=0.0, reuse=None):
     with tf.variable_scope(scope, reuse):
         if size is None:
-            # -1 表示从倒数第二个开始往前所有的
+            # -1 表示取最后一个
             size = x.shape.as_list()[-1]
         else:
             x = conv(x, size, name="input_projection", reuse=reuse)
@@ -109,6 +114,9 @@ def highway(x, size=None, activation=None, num_layers=2, scope="highway", dropou
         return x
 
 
+#             c = residual_block(c_emb, num_blocks=1, num_conv_layers=4, kernel_size=7, mask=self.c_mask, num_filters=d,
+#                                num_heads=nh,
+#                                seq_len=self.c_len, scope="Encoder_Residual_Block")
 def residual_block(inputs, num_blocks, num_conv_layers, kernel_size, mask=None, num_filters=128, input_projection=False,
                    num_heads=8,
                    seq_len=None, scope="res_block", is_training=True, reuse=None, bias=False, dropout=0.0):
@@ -131,6 +139,7 @@ def residual_block(inputs, num_blocks, num_conv_layers, kernel_size, mask=None, 
 
 
 # BN层的设定一般是按照conv->bn->scale->relu的顺序来形成一个block。
+# num_conv_layers=4
 def conv_block(inputs, num_conv_layers, kernel_size, num_filters,
                seq_len=None, scope="conv_block", is_training=True,
                reuse=None, bias=True, dropout=0.0, sublayers=(1, 1)):
@@ -142,6 +151,7 @@ def conv_block(inputs, num_conv_layers, kernel_size, num_filters,
             outputs = norm_fn(outputs, scope="layer_norm_%d" % i, reuse=reuse)
             if i % 2 == 0:
                 outputs = tf.nn.dropout(outputs, 1.0 - dropout)
+            # N * 394 * 1 * 128
             outputs = depthwise_separable_convolution(outputs,
                                                       kernel_size=(kernel_size, 1), num_filters=num_filters,
                                                       scope="depthwise_conv_layers_%d" % i, is_training=is_training,
@@ -178,6 +188,7 @@ def self_attention_block(inputs, num_filters, seq_len, mask=None, num_heads=8,
 
 
 # 对此函数具体干了啥事不太清楚，不知道有啥用
+# 在这里 x.shape=[N,400,96]
 def add_timing_signal_1d(x, min_timescale=1.0, max_timescale=1.0e4):
     """Adds a bunch of sinusoids of different frequencies to a Tensor.
     Each channel of the input Tensor is incremented by a sinusoid of a different
@@ -206,6 +217,7 @@ def add_timing_signal_1d(x, min_timescale=1.0, max_timescale=1.0e4):
     return x + signal
 
 
+# 在这里length=400，channels=96
 def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e4):
     """Gets a bunch of sinusoids of different frequencies.
     Each channel of the input Tensor is incremented by a sinusoid of a different
@@ -247,17 +259,26 @@ def get_timing_signal_1d(length, channels, min_timescale=1.0, max_timescale=1.0e
 # https://arxiv.org/pdf/1610.02357.pdf
 # https://www.cnblogs.com/hans209/p/7103168.html
 # https://blog.csdn.net/mao_xiao_feng/article/details/78003476
-# 深度可分卷积
+# 可分卷积 我们认为是 这样的：
+# 传统的卷积操作 tensor[filter_height,filter_width,in_channel,out_channel]
+# 深度卷积操作 tensor[filter_height,filter_width,in_channel,channel_multiplier]
+# 传统的卷积操作是 输出out_channel 个 矩阵
+# 深度卷积操作 输出in_channel * channel_multiplier 个矩阵，因为 不把每个卷积核卷积的结果相加
+# 深度卷积操作的in_channel 代表是多少卷积核，channel_multiplier 代表卷积核的厚度（也可看作有多少个矩阵）
+# 深度可分卷积 separabble_conv = depthwise_conv + 1 * 1 普通卷积
 def depthwise_separable_convolution(inputs, kernel_size, num_filters,
                                     scope="depthwise_separable_convolution",
                                     bias=True, is_training=True, reuse=None):
     with tf.variable_scope(scope, reuse=reuse):
         shapes = inputs.shape.as_list()
+        # kernel_size 在这里是（7，1）shapes[-1] = 96
+        # 7 * 1 * 96 * 1
         depthwise_filter = tf.get_variable("depthwise_filter",
                                            (kernel_size[0], kernel_size[1], shapes[-1], 1),
                                            dtype=tf.float32,
                                            regularizer=regularizer,
                                            initializer=initializer_relu())
+        # 1 * 1 * 96 * 128
         pointwise_filter = tf.get_variable("pointwise_filter",
                                            (1, 1, shapes[-1], num_filters),
                                            dtype=tf.float32,
@@ -282,6 +303,7 @@ def depthwise_separable_convolution(inputs, kernel_size, num_filters,
 # 这个是Google提出的新概念,是Attention机制的完善
 # 就是多做几次同样的事情，（参数不共享），然后把结果拼接起来
 # 做阅读理解的话，Q 可以是篇章的词向量序列，取 K=V 为问题的词向量序列，那么输出就是所谓的 Aligned Question Embedding。
+# units  = 128 num_heads=8
 def multihead_attention(queries, units, num_heads,
                         memory=None,
                         seq_len=None,
