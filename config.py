@@ -8,6 +8,7 @@ https://github.com/HKUST-KnowComp/R-Net
 
 from pytensorflow.prepro import prepro
 from pytensorflow.QANet.main import train, test, demo
+from pytensorflow.BIDAF.main import train as train_bidaf
 flags = tf.flags
 
 home = os.getcwd()
@@ -22,8 +23,8 @@ dir_name = os.path.join(train_dir, model_name)
 if not os.path.exists(train_dir):
     os.mkdir(train_dir)
 if not os.path.exists(os.path.join(os.getcwd(),dir_name)):
-    os.mkdir(os.path.join(os.getcwd(),dir_name))
-target_dir = "data"
+    os.mkdir(os.path.join(os.getcwd(), dir_name))
+target_dir = home + "\\data"
 log_dir = os.path.join(dir_name, "event")
 save_dir = os.path.join(dir_name, "model")
 answer_dir = os.path.join(dir_name, "answer")
@@ -51,7 +52,7 @@ if not os.path.exists(answer_dir):
     os.makedirs(answer_dir)
 
 flags.DEFINE_string("mode", "train", "Running mode train/debug/test")
-
+flags.DEFINE_string("mode_type", "BIDAF", "Running mode BIDAF/QANET/RNET")
 flags.DEFINE_string("target_dir", target_dir, "Target directory for out data")
 flags.DEFINE_string("log_dir", log_dir, "Directory for tf event")
 flags.DEFINE_string("save_dir", save_dir, "Directory for saving model")
@@ -121,7 +122,10 @@ flags.DEFINE_boolean("fasttext", False, "Whether to use fasttext")
 def main(_):
     config = flags.FLAGS
     if config.mode == "train":
-        train(config)
+        if config.mode_type == 'BIDAF':
+            train_bidaf(config)
+        elif config.mode_type == "QANET":
+            train(config)
     elif config.mode == "prepro":
         prepro(config)
     elif config.mode == "debug":
@@ -129,7 +133,10 @@ def main(_):
         config.val_num_batches = 1
         config.checkpoint = 1
         config.period = 1
-        train(config)
+        if config.mode_type == 'BIDAF':
+            train_bidaf(config)
+        elif config.mode_type == "QANET":
+            train(config)
     elif config.mode == "test":
         test(config)
     elif config.mode == "demo":

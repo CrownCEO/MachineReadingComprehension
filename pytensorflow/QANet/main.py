@@ -39,7 +39,7 @@ def train(config):
         train_iterator = train_dataset.make_one_shot_iterator()
         dev_iterator = dev_dataset.make_one_shot_iterator()
 
-        model = Model(config, iterator, word_mat, char_mat, graph = g)
+        model = Model(config, iterator, word_mat, char_mat, graph=g)
 
         # 如果你指定的设备不存在，允许TF自动分配设备
         sess_config = tf.ConfigProto(allow_soft_placement=True)
@@ -63,7 +63,7 @@ def train(config):
             for _ in tqdm(range(global_step, config.num_steps + 1)):
                 global_step = sess.run(model.global_step) + 1
                 loss, train_op = sess.run([model.loss, model.train_op], feed_dict={
-                                          handle: train_handle, model.dropout: config.dropout})
+                    handle: train_handle, model.dropout: config.dropout})
                 if global_step % config.period == 0:
                     loss_sum = tf.Summary(value=[tf.Summary.Value(
                         tag="model/loss", simple_value=loss), ])
@@ -126,7 +126,7 @@ def demo(config):
     with open(config.test_meta, "r") as fh:
         meta = json.load(fh)
 
-    model = Model(config, None, word_mat, char_mat, trainable=False, demo = True)
+    model = Model(config, None, word_mat, char_mat, trainable=False, demo=True)
     demo = Demo(model, config)
 
 
@@ -148,7 +148,7 @@ def test(config):
         test_batch = get_dataset(config.test_record_file, get_record_parser(
             config, is_test=True), config).make_one_shot_iterator()
 
-        model = Model(config, test_batch, word_mat, char_mat, trainable=False, graph = g)
+        model = Model(config, test_batch, word_mat, char_mat, trainable=False, graph=g)
 
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True
