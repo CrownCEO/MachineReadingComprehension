@@ -102,26 +102,26 @@ class Model(object):
             qh_emb = tf.nn.dropout(qh_emb, 1.0 - 0.5 * self.dropout)
 
             # Bidaf style conv-highway encoder
-            # [N * 400, 12, 96]
+            # [N * c_maxlen, 12, 96]
             ch_emb = conv(ch_emb, d, bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=None)
             qh_emb = conv(qh_emb, d, bias=True, activation=tf.nn.relu, kernel_size=5, name="char_conv", reuse=True)
 
-            # [N * 400，1，96]
+            # [N * c_maxlen，1，96]
             ch_emb = tf.reduce_max(ch_emb, axis=1)
             qh_emb = tf.reduce_max(qh_emb, axis=1)
 
-            # [N ,400, 96]
+            # [N ,c_maxlen, 96]
             ch_emb = tf.reshape(ch_emb, [N, PL, ch_emb.shape[-1]])
             qh_emb = tf.reshape(qh_emb, [N, QL, ch_emb.shape[-1]])
 
-            # [N,400,300]
+            # [N,c_maxlen,300]
             c_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.c), 1.0 - self.dropout)
             q_emb = tf.nn.dropout(tf.nn.embedding_lookup(self.word_mat, self.q), 1.0 - self.dropout)
 
-            # [N,400,396]
+            # [N,c_maxlen,396]
             c_emb = tf.concat([c_emb, ch_emb], axis=2)
             q_emb = tf.concat([q_emb, qh_emb], axis=2)
-            # [N,400,96]
+            # [N,c_maxlen,96]
             c_emb = highway(c_emb, size=d, scope="highway", dropout=self.dropout, reuse=None)
             q_emb = highway(q_emb, size=d, scope="highway", dropout=self.dropout, reuse=True)
 

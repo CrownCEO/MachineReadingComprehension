@@ -4,6 +4,7 @@ import numpy as np
 import os
 from tqdm import tqdm
 from pytensorflow.BIDAF.model import Model
+from pytensorflow.demo import Demo
 from pytensorflow.util import get_record_parser, get_batch_dataset, get_dataset, convert_tokens, evaluate
 
 
@@ -133,8 +134,46 @@ def evaluate_batch(model, num_batches, eval_file, sess, data_type, handle, str_h
     return metrics, [loss_sum, f1_sum, em_sum]
 
 
+def demo(config):
+    with open(config.word_emb_file, "r") as fh:
+        word_mat = np.array(json.load(fh), dtype=np.float32)
+    with open(config.char_emb_file, "r") as fh:
+        char_mat = np.array(json.load(fh), dtype=np.float32)
+    with open(config.test_meta, "r") as fh:
+        meta = json.load(fh)
+
+    model = Model(config, None, word_mat, char_mat, trainable=False, demo=True)
+    demo = Demo(model, config)
 
 
+def test(config):
+    with open(config.word_emb_file, "r") as fh:
+        word_mat = np.array(json.load(fh), dtype=np.float32)
+    with open(config.char_emb_file, "r") as fh:
+        char_mat = np.array(json.load(fh), dtype=np.float32)
+    with open(config.test_eval_file, "r") as fh:
+        eval_file = json.load(fh)
+    with open(config.test_meta, "r") as fh:
+        meta = json.load(fh)
+
+    total = meta["total"]
+    graph = tf.Graph()
+    print("Loading BIDAF model...")
+    with graph.as_default() as g:
+        test_batch = get_dataset(config.test_record_file, get_record_parser(config, is_test=True), config).make_one_shot_iterator()
+        model = Model(config, test_batch, word_mat, char_mat, trainable=False, graph=g)
+        sess_config = tf.ConfigProto(allow_soft_placement=True)
+        sess_config.gpu_options.allow_growth = True
+
+        with tf.Session(config=sess_config) as sess:
+            sess.run(tf.global_variables_initializer())
+            saver = tf.train.Saver()
+            saver.restore(sess, tf.train.latest_checkpoint(config.save_dir))
+            if config.decay < 1.0:
+                sess.run(model.assign_vars)
+            losses = []
+            answer_dict = {}
+            remapped_dict = {}
 
 
 
