@@ -160,8 +160,11 @@ def test(config):
     graph = tf.Graph()
     print("Loading BIDAF model...")
     with graph.as_default() as g:
-        test_batch = get_dataset(config.test_record_file, get_record_parser(config, is_test=True), config).make_one_shot_iterator()
+        test_batch = get_dataset(config.test_record_file, get_record_parser(
+            config, is_test=True), config).make_one_shot_iterator()
+
         model = Model(config, test_batch, word_mat, char_mat, trainable=False, graph=g)
+
         sess_config = tf.ConfigProto(allow_soft_placement=True)
         sess_config.gpu_options.allow_growth = True
 
@@ -174,6 +177,20 @@ def test(config):
             losses = []
             answer_dict = {}
             remapped_dict = {}
+            for step in tqdm(range(total // config.batch_size + 1)):
+                qa_id, loss, yp1, yp2 = sess.run(
+                    [model.qa_id, model.loss, model.yp1, model.yp2])
+                answer_dict_, remapped_dict_ = convert_tokens(
+                    eval_file, qa_id.tolist(), yp1.tolist(), yp2.tolist())
+                answer_dict.update(answer_dict_)
+                remapped_dict.update(remapped_dict_)
+                losses.append(loss)
+            loss = np.mean(losses)
+            metrics = evaluate(eval_file, answer_dict)
+            with open(config.answer_file, "w") as fh:
+                json.dump(remapped_dict, fh)
+            print("Exact Match: {}, F1: {}".format(
+                metrics['exact_match'], metrics['f1']))
 
 
 
