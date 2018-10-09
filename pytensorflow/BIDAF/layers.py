@@ -287,3 +287,15 @@ def mask_logits(inputs, mask, mask_value=-1e30):
     shapes = inputs.shape.as_list()
     mask = tf.cast(mask, tf.float32)
     return inputs + mask_value * (1 - mask)
+
+
+# 用于计算总参数个数
+def total_params():
+    total_parameters = 0
+    for variable in tf.trainable_variables():
+        shape = variable.get_shape()
+        variable_parametes = 1
+        for dim in shape:
+            variable_parametes *= dim.value
+        total_parameters += variable_parametes
+    print("Total number of trainable parameters: {}".format(total_parameters))

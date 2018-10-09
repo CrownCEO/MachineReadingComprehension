@@ -5,3 +5,5 @@ bottle
 tensorflow
 ujson
 cPickle
+tensorflow_hub
+tensor2tensor

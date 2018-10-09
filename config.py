@@ -7,8 +7,10 @@ https://github.com/HKUST-KnowComp/R-Net
 '''
 
 from pytensorflow.prepro import prepro
-from pytensorflow.QANet.main import train, test, demo
-from pytensorflow.BIDAF.main import train as train_bidaf
+from pytensorflow.QANet.main import train as train_qanet, test as test_qanet, demo as demo_qanet
+from pytensorflow.BIDAF.main import train as train_bidaf, test as test_bidaf, demo as demo_bidaf
+from pytensorflow.RMA.main import train as train_rma, test as test_rma, demo as demo_rma
+from pytensorflow.RNet.main import train as train_rnet, test as test_rnet, demo as demo_rnet
 flags = tf.flags
 
 home = os.getcwd()
@@ -52,7 +54,7 @@ if not os.path.exists(answer_dir):
     os.makedirs(answer_dir)
 
 flags.DEFINE_string("mode", "train", "Running mode train/debug/test")
-flags.DEFINE_string("mode_type", "BIDAF", "Running mode BIDAF/QANET/RNET")
+flags.DEFINE_string("mode_type", "BIDAF", "Running mode BIDAF/QANET/RNET/RMA")
 flags.DEFINE_string("target_dir", target_dir, "Target directory for out data")
 flags.DEFINE_string("log_dir", log_dir, "Directory for tf event")
 flags.DEFINE_string("save_dir", save_dir, "Directory for saving model")
@@ -125,7 +127,11 @@ def main(_):
         if config.mode_type == 'BIDAF':
             train_bidaf(config)
         elif config.mode_type == "QANET":
-            train(config)
+            train_qanet(config)
+        elif config.mode_type == "RMA":
+            train_rma(config)
+        elif config.mode_type == "RNET":
+            train_rnet(config)
     elif config.mode == "prepro":
         prepro(config)
     elif config.mode == "debug":
@@ -136,11 +142,29 @@ def main(_):
         if config.mode_type == 'BIDAF':
             train_bidaf(config)
         elif config.mode_type == "QANET":
-            train(config)
+            train_qanet(config)
+        elif config.mode_type == "RMA":
+            train_rma(config)
+        elif config.mode_type == "RNET":
+            train_rnet(config)
     elif config.mode == "test":
-        test(config)
+        if config.mode_type == 'BIDAF':
+            test_bidaf(config)
+        elif config.mode_type == "QANET":
+            test_qanet(config)
+        elif config.mode_type == "RMA":
+            test_rma(config)
+        elif config.mode_type == "RNET":
+            test_rnet(config)
     elif config.mode == "demo":
-        demo(config)
+        if config.mode_type == 'BIDAF':
+            demo_bidaf(config)
+        elif config.mode_type == "QANET":
+            demo_qanet(config)
+        elif config.mode_type == "RMA":
+            demo_rma(config)
+        elif config.mode_type == "RNET":
+            demo_rnet(config)
     else:
         print("Unknown mode")
         exit(0)

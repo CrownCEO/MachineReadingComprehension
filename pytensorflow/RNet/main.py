@@ -155,3 +155,14 @@ def test(config):
             json.dump(remapped_dict, fh)
         print("Exact Match: {}, F1: {}".format(
             metrics['exact_match'], metrics['f1']))
+
+def demo(config):
+    with open(config.word_emb_file, "r") as fh:
+        word_mat = np.array(json.load(fh), dtype=np.float32)
+    with open(config.char_emb_file, "r") as fh:
+        char_mat = np.array(json.load(fh), dtype=np.float32)
+    with open(config.test_meta, "r") as fh:
+        meta = json.load(fh)
+
+    model = Model(config, None, word_mat, char_mat, trainable=False, demo=True)
+    demo = Demo(model, config)

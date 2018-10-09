@@ -1,5 +1,8 @@
 import tensorflow as tf
-from pytensorflow.BIDAF.layers import conv, highway, bidirectional_dynamic_rnn, optimized_trilinear_for_attention, mask_logits,regularizer
+
+from pytensorflow.BIDAF.layers import conv, highway, bidirectional_dynamic_rnn, optimized_trilinear_for_attention, \
+    mask_logits, regularizer, total_params
+
 
 class Model(object):
     def __init__(self, config, batch, word_mat=None, char_mat=None, trainable=True, opt=True, demo=False, graph=None):
@@ -56,6 +59,15 @@ class Model(object):
             self.qh_len = tf.reshape(tf.reduce_sum(
                 tf.cast(tf.cast(self.qh, tf.bool), tf.int32), axis=2), [-1])
             self.forward()
+            total_params()
+            if trainable:
+                self.lr = tf.minimum(config.learning_rate,
+                                     0.001 / tf.log(999.) * tf.log(tf.cast(self.global_step, tf.float32) + 1))
+                self.opt = tf.train.AdamOptimizer(learning_rate=self.lr, beta1=0.9, beta2=0.999, epsilon=1e-7)
+                grads = self.opt.compute_gradients(self.loss)
+                gradients, variables = zip(*grads)
+                capped_grads, _ = tf.clip_by_global_norm(gradients, config.grad_clip)
+                self.train_op = self.opt.apply_gradients(zip(capped_grads, variables), global_step=self.global_step)
 
     def forward(self):
         config = self.config
@@ -172,5 +184,3 @@ class Model(object):
 
     def get_global_step(self):
         return self.global_step
-
-

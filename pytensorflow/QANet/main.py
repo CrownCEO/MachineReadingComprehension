@@ -27,7 +27,7 @@ def train(config):
         meta = json.load(fh)
 
     dev_total = meta["total"]
-    print("Building model...")
+    print("Building QANet model...")
     parser = get_record_parser(config)
     graph = tf.Graph()
     with graph.as_default() as g:
@@ -143,7 +143,7 @@ def test(config):
     total = meta["total"]
 
     graph = tf.Graph()
-    print("Loading model...")
+    print("Loading QANet model...")
     with graph.as_default() as g:
         test_batch = get_dataset(config.test_record_file, get_record_parser(
             config, is_test=True), config).make_one_shot_iterator()
